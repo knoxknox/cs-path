@@ -18,7 +18,6 @@ import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestRule;
 import org.junit.rules.Timeout;
 
-import edu.berkeley.cs186.database.common.Pair;
 import edu.berkeley.cs186.database.databox.DataBox;
 import edu.berkeley.cs186.database.databox.IntDataBox;
 import edu.berkeley.cs186.database.databox.Type;
@@ -56,27 +55,148 @@ public class TestBPlusTree {
     }
 
     // Tests ///////////////////////////////////////////////////////////////////
+    // HIDDEN
     @Test
-    public void testSimpleBulkLoad() throws BPlusTreeException, IOException {
+    public void testEmptyTree() throws BPlusTreeException, IOException {
       BPlusTree tree = getBPlusTree(Type.intType(), 2);
-      float fillFactor = 0.75f;
-      assertEquals("()", tree.toSexp());
+      List<RecordId> empty = new ArrayList<>();
 
-      List<Pair<DataBox, RecordId>> data = new ArrayList<>();
-      for (int i = 1; i <= 11; ++i) {
-        data.add(new Pair<>(new IntDataBox(i), new RecordId(i, (short) i)));
+      // Make sure that operations on an empty B+ tree doesn't throw any
+      // exceptions.
+      for (int i = 0; i < 10; ++i) {
+        tree.remove(new IntDataBox(i));
+        assertEquals(Optional.empty(), tree.get(new IntDataBox(i)));
+        Iterator<RecordId> eq = tree.scanEqual(new IntDataBox(i));
+        Iterator<RecordId> all = tree.scanAll();
+        Iterator<RecordId> ge = tree.scanGreaterEqual(new IntDataBox(i));
+        assertEquals(empty, iteratorToList(eq));
+        assertEquals(empty, iteratorToList(all));
+        assertEquals(empty, iteratorToList(ge));
+      }
+    }
+
+    // HIDDEN
+    @Test
+    public void testBPlusTreeFromDisk() throws BPlusTreeException, IOException {
+      BPlusTree tree = getBPlusTree(Type.intType(), 2);
+      for (int i = 0; i < 100; ++i) {
+        tree.put(new IntDataBox(i), new RecordId(i, (short) i));
       }
 
-      tree.bulkLoad(data.iterator(), fillFactor);
-      //      (    4        7         10        _   )
-      //       /       |         |         \
-      // (1 2 3 _) (4 5 6 _) (7 8 9 _) (10 11 _ _)
-      String leaf0 = "((1 (1 1)) (2 (2 2)) (3 (3 3)))";
-      String leaf1 = "((4 (4 4)) (5 (5 5)) (6 (6 6)))";
-      String leaf2 = "((7 (7 7)) (8 (8 8)) (9 (9 9)))";
-      String leaf3 = "((10 (10 10)) (11 (11 11)))";
-      String sexp = String.format("(%s 4 %s 7 %s 10 %s)", leaf0, leaf1, leaf2, leaf3);
-      assertEquals(sexp, tree.toSexp());
+      BPlusTree fromDisk = new BPlusTree(file.getAbsolutePath());
+      for (int i = 0; i < 100; ++i) {
+        IntDataBox key = new IntDataBox(i);
+        RecordId rid = new RecordId(i, (short) i);
+        assertEquals(Optional.of(rid), tree.get(key));
+      }
+    }
+
+    // HIDDEN
+    @Test
+    public void testSimpleGets() throws BPlusTreeException, IOException {
+      BPlusTree tree = getBPlusTree(Type.intType(), 2);
+      for (int i = 0; i < 100; ++i) {
+        tree.put(new IntDataBox(i), new RecordId(i, (short) i));
+      }
+
+      for (int i = 0; i < 100; ++i) {
+        IntDataBox key = new IntDataBox(i);
+        RecordId rid = new RecordId(i, (short) i);
+        assertEquals(Optional.of(rid), tree.get(key));
+      }
+
+      for (int i = 100; i < 150; ++i) {
+        assertEquals(Optional.empty(), tree.get(new IntDataBox(i)));
+      }
+    }
+
+    // HIDDEN
+    @Test
+    public void testEmptyScans() throws BPlusTreeException, IOException {
+      // Create and then empty the tree.
+      BPlusTree tree = getBPlusTree(Type.intType(), 2);
+      for (int i = 0; i < 100; ++i) {
+        tree.put(new IntDataBox(i), new RecordId(i, (short) i));
+      }
+      for (int i = 0; i < 100; ++i) {
+        tree.remove(new IntDataBox(i));
+      }
+
+      // Scan over the tree.
+      Iterator<RecordId> actual = tree.scanAll();
+      assertEquals(new ArrayList<RecordId>(), iteratorToList(actual));
+      actual = tree.scanGreaterEqual(new IntDataBox(42));
+      assertEquals(new ArrayList<RecordId>(), iteratorToList(actual));
+      actual = tree.scanGreaterEqual(new IntDataBox(100));
+      assertEquals(new ArrayList<RecordId>(), iteratorToList(actual));
+    }
+
+    // HIDDEN
+    @Test
+    public void testPartiallyEmptyScans()
+        throws BPlusTreeException, IOException {
+      // Create and then empty part of the tree.
+      BPlusTree tree = getBPlusTree(Type.intType(), 2);
+      for (int i = 0; i < 100; ++i) {
+        tree.put(new IntDataBox(i), new RecordId(i, (short) i));
+      }
+      for (int i = 25; i < 75; ++i) {
+        tree.remove(new IntDataBox(i));
+      }
+
+      // Scan over the tree.
+      Iterator<RecordId> actual = tree.scanAll();
+      List<RecordId> expected = new ArrayList<>();
+      for (int i = 0; i < 25; ++i) {
+        expected.add(new RecordId(i, (short) i));
+      }
+      for (int i = 75; i < 100; ++i) {
+        expected.add(new RecordId(i, (short) i));
+      }
+      assertEquals(expected, iteratorToList(actual));
+
+      actual = tree.scanGreaterEqual(new IntDataBox(42));
+      expected = new ArrayList<>();
+      for (int i = 75; i < 100; ++i) {
+        expected.add(new RecordId(i, (short) i));
+      }
+      assertEquals(expected, iteratorToList(actual));
+
+      actual = tree.scanGreaterEqual(new IntDataBox(99));
+      expected = new ArrayList<>();
+      expected.add(new RecordId(99, (short) 99));
+      assertEquals(expected, iteratorToList(actual));
+    }
+
+    @Test(expected = BPlusTreeException.class)
+    public void testDuplicatePut() throws BPlusTreeException, IOException {
+      BPlusTree tree = getBPlusTree(Type.intType(), 2);
+      tree.put(new IntDataBox(0), new RecordId(0, (short) 0));
+      tree.put(new IntDataBox(0), new RecordId(0, (short) 0));
+    }
+
+    // HIDDEN
+    @Test
+    public void testRandomRids() throws BPlusTreeException, IOException {
+      int d = 3;
+      BPlusTree tree = getBPlusTree(Type.intType(), d);
+
+      List<DataBox> keys = new ArrayList<DataBox>();
+      List<RecordId> rids = new ArrayList<RecordId>();
+      for (int i = 0; i < 50 * d; ++i) {
+        keys.add(new IntDataBox(i));
+        rids.add(new RecordId(i, (short) i));
+      }
+      Collections.shuffle(rids, new Random(42));
+
+      for (int i = 0; i < keys.size(); ++i) {
+        tree.put(keys.get(i), rids.get(i));
+        assertEquals(Optional.of(rids.get(i)), tree.get(keys.get(i)));
+      }
+
+      for (int i = 0; i < keys.size(); ++i) {
+        assertEquals(Optional.of(rids.get(i)), tree.get(keys.get(i)));
+      }
     }
 
     @Test
@@ -386,6 +506,50 @@ public class TestBPlusTree {
           }
         }
       }
+    }
+
+    // HIDDEN
+    @Test
+    public void testRepeatedInsertsAndRemoves()
+        throws BPlusTreeException, IOException {
+      BPlusTree tree = getBPlusTree(Type.intType(), 4);
+
+      // Insert [0, 200).
+      for (int i = 0; i < 200; ++i) {
+        tree.put(new IntDataBox(i), new RecordId(i, (short) i));
+      }
+
+      // Delete [100, 200).
+      for (int i = 100; i < 200; ++i) {
+        tree.remove(new IntDataBox(i));
+      }
+
+      // Insert [150, 300).
+      for (int i = 150; i < 300; ++i) {
+        tree.put(new IntDataBox(i), new RecordId(i, (short) i));
+      }
+
+      // Delete [250, 300).
+      for (int i = 250; i < 300; ++i) {
+        tree.remove(new IntDataBox(i));
+      }
+
+      // Add [100, 150]
+      for (int i = 100; i < 150; ++i) {
+        tree.put(new IntDataBox(i), new RecordId(i, (short) i));
+      }
+
+      // Add [250, 300]
+      for (int i = 250; i < 300; ++i) {
+        tree.put(new IntDataBox(i), new RecordId(i, (short) i));
+      }
+
+      // Range [0, 300) should be full.
+      List<RecordId> rids = new ArrayList<>();
+      for (int i = 0; i < 300; ++i) {
+        rids.add(new RecordId(i, (short) i));
+      }
+      assertEquals(rids, iteratorToList(tree.scanAll()));
     }
 
     @Test

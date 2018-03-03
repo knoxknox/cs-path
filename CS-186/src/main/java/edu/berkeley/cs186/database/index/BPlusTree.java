@@ -1,8 +1,5 @@
 package edu.berkeley.cs186.database.index;
 
-import java.io.IOException;
-import java.io.FileWriter;
-import java.io.File;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -156,7 +153,8 @@ public class BPlusTree {
      */
     public Optional<RecordId> get(DataBox key) {
       typecheck(key);
-      throw new UnsupportedOperationException("TODO(hw2): implement.");
+      LeafNode leaf = root.get(key);
+      return leaf.getKey(key);
     }
 
     /**
@@ -204,8 +202,8 @@ public class BPlusTree {
      * memory will receive 0 points.
      */
     public Iterator<RecordId> scanAll() {
-      throw new UnsupportedOperationException("TODO(hw2): implement.");
-      // TODO(hw2): Return a BPlusTreeIterator.
+      LeafNode leaf = root.getLeftmostLeaf();
+      return new BPlusTreeIterator(leaf, leaf.scanAll());
     }
 
     /**
@@ -234,8 +232,8 @@ public class BPlusTree {
      */
     public Iterator<RecordId> scanGreaterEqual(DataBox key) {
       typecheck(key);
-      throw new UnsupportedOperationException("TODO(hw2): implement.");
-      // TODO(hw2): Return a BPlusTreeIterator.
+      LeafNode leaf = root.get(key);
+      return new BPlusTreeIterator(leaf, leaf.scanGreaterEqual(key));
     }
 
     /**
@@ -250,26 +248,46 @@ public class BPlusTree {
      */
     public void put(DataBox key, RecordId rid) throws BPlusTreeException {
       typecheck(key);
-      throw new UnsupportedOperationException("TODO(hw2): implement.");
-    }
+      Optional<Pair<DataBox, Integer>> o = root.put(key, rid);
 
-    /**
-     * Bulk loads data into the B+ tree. Tree should be empty and the data
-     * iterator should be in sorted order (by the DataBox key field) and
-     * contain no duplicates (no error checking is done for this).
-     *
-     * fillFactor specifies the fill factor for leaves only; inner nodes should
-     * be filled up to full and split in half exactly like in put.
-     *
-     * This method should raise an exception if the tree is not empty at time
-     * of bulk loading. If data does not meet the preconditions (contains
-     * duplicates or not in order), the resulting behavior is undefined.
-     *
-     * The behavior of this method should be similar to that of InnerNode's
-     * bulkLoad (see comments in BPlusNode.bulkLoad).
-     */
-    public void bulkLoad(Iterator<Pair<DataBox, RecordId>> data, float fillFactor) throws BPlusTreeException {
-      throw new UnsupportedOperationException("TODO(hw2): implement.");
+      // If our root did not split, then we're done.
+      if (!o.isPresent()) {
+        return;
+      }
+      Pair<DataBox, Integer> p = o.get();
+
+      // If our root did split, then we have to create a new root node. For
+      // example, we might go from a B+ tree which looks like this:
+      //
+      //     +---+---+---+---+---+
+      //     | a | b | c | d | e |
+      //     +---+---+---+---+---+
+      //    /    |   |   |   |    \
+      //   0     1   2   3   4     5
+      //
+      // to a B+ tree that looks like this:
+      //
+      //              +---+
+      //              | c |
+      //              +---+
+      //             /     \
+      //     +---+---+     +---+---+
+      //     | a | b |     | d | e |
+      //     +---+---+     +---+---+
+      //    /    |    \   /    |    \
+      //   0     1     2 3     4     5
+      //
+      // Note that in this example, p = (c, page num of right child).
+      List<DataBox> keys = new ArrayList<>();
+      keys.add(p.getFirst());
+
+      List<Integer> children = new ArrayList<>();
+      children.add(root.getPage().getPageNum());
+      children.add(p.getSecond());
+
+      InnerNode inner = new InnerNode(metadata, keys, children);
+      this.root = inner;
+      writeHeader(headerPage.getByteBuffer());
     }
 
     /**
@@ -286,7 +304,7 @@ public class BPlusTree {
      */
     public void remove(DataBox key) {
       typecheck(key);
-      throw new UnsupportedOperationException("TODO(hw2): implement.");
+      root.remove(key);
     }
 
     // Helpers /////////////////////////////////////////////////////////////////
@@ -317,39 +335,6 @@ public class BPlusTree {
       strings.add(root.toDot());
       strings.add("}");
       return String.join("\n", strings);
-    }
-
-    /**
-     * This function is very similar to toDot() except that we write
-     * the dot representation of the B+ tree to a dot file and then
-     * convert that to a PDF that will be stored in the src directory. Pass in a
-     * string with the ".pdf" extension included at the end (ex "tree.pdf").
-     */
-    public void toDotPDFFile(String filename) {
-      List<String> strings = new ArrayList<>();
-      strings.add("digraph g {" );
-      strings.add("  node [shape=record, height=0.1];");
-      strings.add(root.toDot());
-      strings.add("}");
-      String tree_string = String.join("\n", strings);
-
-      // Writing to intermediate dot file
-      try {
-    	  File file = new File("tree.dot");
-    	  FileWriter fileWriter = new FileWriter(file);
-    	  fileWriter.write(tree_string);
-    	  fileWriter.flush();
-    	  fileWriter.close();
-      } catch (IOException e) {
-    	  e.printStackTrace();
-      }
-
-      // Running command to convert dot file to PDF
-      try {
-    	Runtime.getRuntime().exec("dot -T pdf tree.dot -o " + filename);
-	  } catch (IOException e) {
-		e.printStackTrace();
-	  }
     }
 
     /**
@@ -385,16 +370,58 @@ public class BPlusTree {
 
     // Iterator ////////////////////////////////////////////////////////////////
     private class BPlusTreeIterator implements Iterator<RecordId> {
-      // TODO(hw2): Add whatever fields and constructors you want here.
+      // A BPlusTreeIterator iterates over the entries of a B+ tree leaf by
+      // leaf. We maintain the following invariants:
+      //
+      //   - leaf is null if and only if iter is null
+      //   - iter is not null if and only if iter.hasNext()
+      private LeafNode leaf;
+      private Iterator<RecordId> iter;
+
+      public BPlusTreeIterator(LeafNode leaf, Iterator<RecordId> iter) {
+        assert(leaf != null);
+        assert(iter != null);
+        this.leaf = leaf;
+        this.iter = iter;
+
+        if (!this.iter.hasNext()) {
+          advance();
+        }
+      }
+
+      private void advance() {
+        Optional<LeafNode> sibling = leaf.getRightSibling();
+        if (sibling.isPresent()) {
+          this.leaf = sibling.get();
+          this.iter = this.leaf.scanAll();
+          if (!this.iter.hasNext()) {
+            advance();
+          }
+        } else {
+          this.leaf = null;
+          this.iter = null;
+        }
+      }
 
       @Override
       public boolean hasNext() {
-        throw new UnsupportedOperationException("TODO(hw2): implement.");
+        return iter != null;
       }
 
       @Override
       public RecordId next() {
-        throw new UnsupportedOperationException("TODO(hw2): implement.");
+        if (!hasNext()) {
+          throw new NoSuchElementException();
+        }
+        assert(leaf != null);
+        assert(iter != null);
+        assert(iter.hasNext());
+
+        RecordId rid = iter.next();
+        if (!iter.hasNext()) {
+          advance();
+        }
+        return rid;
       }
     }
 }

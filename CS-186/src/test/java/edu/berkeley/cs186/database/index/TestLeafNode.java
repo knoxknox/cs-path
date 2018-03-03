@@ -69,7 +69,7 @@ public class TestLeafNode {
 
     // Tests ///////////////////////////////////////////////////////////////////
     @Test
-    public void testGetL() throws IOException {
+    public void testGet() throws IOException {
       BPlusTreeMetadata meta = getBPlusTreeMetadata(Type.intType(), 5);
       LeafNode leaf = getEmptyLeaf(meta, Optional.empty());
       for (int i = 0; i < 10; ++i) {
@@ -78,37 +78,10 @@ public class TestLeafNode {
     }
 
     @Test
-    public void testGetLeftmostLeafL() throws IOException {
+    public void testGetLeftmostLeaf() throws IOException {
       BPlusTreeMetadata meta = getBPlusTreeMetadata(Type.intType(), 5);
       LeafNode leaf = getEmptyLeaf(meta, Optional.empty());
       assertEquals(leaf, leaf.getLeftmostLeaf());
-    }
-
-    @Test
-    public void testSmallBulkLoad() throws BPlusTreeException, IOException {
-      // Bulk loads with 60% of a leaf's worth, then checks that the
-      // leaf didn't split.
-      int d = 5;
-      float fillFactor = 0.8f;
-      BPlusTreeMetadata meta = getBPlusTreeMetadata(Type.intType(), d);
-      LeafNode leaf = getEmptyLeaf(meta, Optional.empty());
-
-      List<Pair<DataBox, RecordId>> data = new ArrayList<>();
-      for (int i = 0; i < (int) Math.ceil(1.5 * d * fillFactor); ++i) {
-        DataBox key = new IntDataBox(i);
-        RecordId rid = new RecordId(i, (short) i);
-        data.add(i, new Pair<>(key, rid));
-      }
-
-      assertFalse(leaf.bulkLoad(data.iterator(), fillFactor).isPresent());
-
-      Iterator<RecordId> iter = leaf.scanAll();
-      Iterator<Pair<DataBox, RecordId>> expected = data.iterator();
-      while (iter.hasNext() && expected.hasNext()) {
-        assertEquals(expected.next().getSecond(), iter.next());
-      }
-      assertFalse(iter.hasNext());
-      assertFalse(expected.hasNext());
     }
 
     @Test
@@ -127,6 +100,26 @@ public class TestLeafNode {
           rid = new RecordId(j, (short) j);
           assertEquals(Optional.of(rid), leaf.getKey(key));
         }
+      }
+    }
+
+    // HIDDEN
+    @Test
+    public void testNoOverflowOutOfOrderPuts()
+        throws BPlusTreeException, IOException {
+      int d = 2;
+      BPlusTreeMetadata meta = getBPlusTreeMetadata(Type.intType(), d);
+      LeafNode leaf = getEmptyLeaf(meta, Optional.empty());
+
+      assertEquals(Optional.empty(), leaf.put(d3, r3));
+      assertEquals(Optional.empty(), leaf.put(d1, r1));
+      assertEquals(Optional.empty(), leaf.put(d2, r2));
+      assertEquals(Optional.empty(), leaf.put(d0, r0));
+
+      for (int i = 0; i < 2*d; ++i) {
+        IntDataBox key = new IntDataBox(i);
+        RecordId rid = new RecordId(i, (short) i);
+        assertEquals(Optional.of(rid), leaf.getKey(key));
       }
     }
 
@@ -166,6 +159,64 @@ public class TestLeafNode {
       leaf.put(new IntDataBox(0), new RecordId(0, (short) 0));
     }
 
+    // HIDDEN
+    @Test
+    public void testOverflowPuts() throws BPlusTreeException, IOException {
+      int d = 2;
+      BPlusTreeMetadata meta = getBPlusTreeMetadata(Type.intType(), d);
+      LeafNode left = getEmptyLeaf(meta, Optional.empty());
+
+      // Fill the left up completely.
+      //
+      //   left
+      //   +---------+---------+---------+---------+
+      //   | 0:(0,0) | 1:(1,1) | 2:(2,2) | 3:(3,3) |
+      //   +---------+---------+---------+---------+
+      for (int i = 0; i < 2 * d; ++i) {
+        DataBox key = new IntDataBox(i);
+        RecordId rid = new RecordId(i, (short) i);
+        assertEquals(Optional.empty(), left.put(key, rid));
+      }
+
+      // Overflow the left and split:
+      //
+      //   left                  right
+      //   +---------+---------+ +---------+---------+---------+
+      //   | 0:(0,0) | 1:(1,1) | | 2:(2,2) | 3:(3,3) | 4:(4,4) |
+      //   +---------+---------+ +---------+---------+---------+
+      DataBox key = new IntDataBox(2*d);
+      RecordId rid = new RecordId(2*d, (short) (2*d));
+      Optional<Pair<DataBox, Integer>> o = left.put(key, rid);
+
+      assertTrue(o.isPresent());
+      Pair<DataBox, Integer> p = o.get();
+      DataBox splitKey = p.getFirst();
+      int rightPageNum = p.getSecond();
+
+      // Load the right child.
+      Page rightPage = meta.getAllocator().fetchPage(rightPageNum);
+      LeafNode right = LeafNode.fromBytes(meta, rightPageNum);
+
+      // Check everything.
+      assertEquals(new IntDataBox(2), splitKey);
+
+      assertEquals(Optional.of(right), left.getRightSibling());
+      assertEquals(Arrays.asList(d0, d1), left.getKeys());
+      assertEquals(Arrays.asList(r0, r1), left.getRids());
+
+      assertEquals(Optional.empty(), right.getRightSibling());
+      assertEquals(Arrays.asList(d2, d3, d4), right.getKeys());
+      assertEquals(Arrays.asList(r2, r3, r4), right.getRids());
+
+      // Make sure our left changes persisted on disk.
+      int leftPageNum = left.getPage().getPageNum();
+      LeafNode leftFromDisk = LeafNode.fromBytes(meta, leftPageNum);
+
+      assertEquals(Optional.of(right), leftFromDisk.getRightSibling());
+      assertEquals(Arrays.asList(d0, d1), leftFromDisk.getKeys());
+      assertEquals(Arrays.asList(r0, r1), leftFromDisk.getRids());
+    }
+
     @Test
     public void testSimpleRemoves() throws BPlusTreeException, IOException {
       int d = 5;
@@ -181,6 +232,51 @@ public class TestLeafNode {
       }
 
       // Remove entries.
+      for (int i = 0; i < 2 * d; ++i) {
+        IntDataBox key = new IntDataBox(i);
+        leaf.remove(key);
+        assertEquals(Optional.empty(), leaf.getKey(key));
+      }
+    }
+
+    // HIDDEN
+    @Test
+    public void testOutOfOrderRemoves() throws BPlusTreeException, IOException {
+      int d = 5;
+      BPlusTreeMetadata meta = getBPlusTreeMetadata(Type.intType(), d);
+      LeafNode leaf = getEmptyLeaf(meta, Optional.empty());
+
+      List<DataBox> keys = new ArrayList<>();
+      List<RecordId> rids = new ArrayList<>();
+      for (int i = 0; i < 2 * d; ++i) {
+        keys.add(new IntDataBox(i));
+        rids.add(new RecordId(i, (short) i));
+      }
+
+      // Insert entries in random order.
+      Collections.shuffle(keys, new Random(42));
+      Collections.shuffle(rids, new Random(42));
+      for (int i = 0; i < 2 * d; ++i) {
+        assertEquals(Optional.empty(), leaf.put(keys.get(i), rids.get(i)));
+      }
+
+      // Remove entries in random order.
+      Collections.shuffle(keys, new Random(42));
+      Collections.shuffle(rids, new Random(42));
+      for (int i = 0; i < 2 * d; ++i) {
+        leaf.remove(keys.get(i));
+        assertEquals(Optional.empty(), leaf.getKey(keys.get(i)));
+      }
+    }
+
+    // HIDDEN
+    @Test
+    public void testAbsentRemoves() throws BPlusTreeException, IOException {
+      int d = 5;
+      BPlusTreeMetadata meta = getBPlusTreeMetadata(Type.intType(), d);
+      LeafNode leaf = getEmptyLeaf(meta, Optional.empty());
+
+      // Removing absent keys is ok; it doesn't throw an exception.
       for (int i = 0; i < 2 * d; ++i) {
         IntDataBox key = new IntDataBox(i);
         leaf.remove(key);

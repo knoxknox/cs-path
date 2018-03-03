@@ -249,6 +249,82 @@ public class TestInnerNode {
       checkTreeMatchesExpectations();
     }
 
+    // HIDDEN
+    @Test
+    public void testOverflowPuts() throws BPlusTreeException, IOException {
+      // Overflow the first leaf. The tree look like this:
+      //
+      //   (3, 10, 20)
+      //   (1, 2) (3, 4, 5) (11, 12, 13) (21, 22, 23)
+      //          a
+      inner.put(new IntDataBox(4), new RecordId(4, (short) 4));
+      inner.put(new IntDataBox(5), new RecordId(5, (short) 5));
+
+      int leafa =
+        getLeaf(this.leaf0).getRightSibling().get().getPage().getPageNum();
+      innerKeys.add(0, new IntDataBox(3));
+      innerChildren.add(1, leafa);
+      assertEquals(innerKeys, inner.getKeys());
+      assertEquals(innerChildren, inner.getChildren());
+
+      // Overflow the second leaf.
+      //
+      //   (3, 5, 10, 20)
+      //   (1, 2) (3, 4) (5, 6, 7) (11, 12, 13) (21, 22, 23)
+      //          a      b
+      inner.put(new IntDataBox(6), new RecordId(6, (short) 6));
+      inner.put(new IntDataBox(7), new RecordId(7, (short) 7));
+
+      int leafb = getLeaf(leafa).getRightSibling().get().getPage().getPageNum();
+      innerKeys.add(1, new IntDataBox(5));
+      innerChildren.add(2, leafb);
+      assertEquals(innerKeys, inner.getKeys());
+      assertEquals(innerChildren, inner.getChildren());
+
+      // Again! This one overflows the index too.
+      //   (7)
+      //   (3, 5) (10, 20)
+      //   (1, 2) (3, 4) (5, 6) (7, 8, 9) (11, 12, 13) (21, 22, 23)
+      //          a      b      c
+      inner.put(new IntDataBox(8), new RecordId(8, (short) 8));
+      Optional<Pair<DataBox, Integer>> o =
+        inner.put(new IntDataBox(9), new RecordId(9, (short) 9));
+
+      assertTrue(o.isPresent());
+      Pair<DataBox, Integer> p = o.get();
+      DataBox splitKey = p.getFirst();
+      Integer newInnerPageNum = p.getSecond();
+
+      assertEquals(new IntDataBox(7), splitKey);
+
+      innerKeys = innerKeys.subList(0, 2);
+      innerChildren = innerChildren.subList(0, 3);
+      assertEquals(innerKeys, inner.getKeys());
+      assertEquals(innerChildren, inner.getChildren());
+
+      BPlusTreeMetadata meta = getBPlusTreeMetadata(Type.intType(), 2);
+      InnerNode newInner = InnerNode.fromBytes(meta, newInnerPageNum);
+
+      List<DataBox> newInnerKeys = new ArrayList<>();
+      newInnerKeys.add(new IntDataBox(10));
+      newInnerKeys.add(new IntDataBox(20));
+
+      List<Integer> newInnerChildren = new ArrayList<>();
+      int leafc = getLeaf(leafb).getRightSibling().get().getPage().getPageNum();
+      newInnerChildren.add(leafc);
+      newInnerChildren.add(this.leaf1);
+      newInnerChildren.add(this.leaf2);
+
+      assertEquals(newInnerKeys, newInner.getKeys());
+      assertEquals(newInnerChildren, newInner.getChildren());
+
+      // Make sure we can read inner from disk.
+      int innerPageNum = inner.getPage().getPageNum();
+      InnerNode innerFromDisk = InnerNode.fromBytes(meta, innerPageNum);
+      assertEquals(innerKeys, innerFromDisk.getKeys());
+      assertEquals(innerChildren, innerFromDisk.getChildren());
+    }
+
     @Test
     public void testRemove() throws IOException {
       // Remove from leaf 0.

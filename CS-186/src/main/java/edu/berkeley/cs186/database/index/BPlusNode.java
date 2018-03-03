@@ -2,7 +2,6 @@ package edu.berkeley.cs186.database.index;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
 
@@ -135,29 +134,6 @@ abstract class BPlusNode {
    * raised.
    */
   public abstract Optional<Pair<DataBox, Integer>> put(DataBox key, RecordId rid)
-    throws BPlusTreeException;
-
-  /**
-   * n.bulkLoad(data, fillFactor) bulk loads pairs of (k, r) from data into
-   * the tree with the given fill factor. 
-   *
-   * This method is very similar to n.put, with a couple of differences:
-   *
-   * 1. Leaf nodes do not fill up to 2*d+1 and split, but rather, fill up to
-   * be 1 record more than fillFactor full, then "splits" by creating a right
-   * sibling that contains just one record (leaving the original node with
-   * the desired fill factor).
-   *
-   * 2. Inner nodes should repeatedly try to bulk load the rightmost child
-   * until either the inner node is full (in which case it should split)
-   * or there is no more data.
-   *
-   * fillFactor should ONLY be used for determining how full leaf nodes are
-   * (not inner nodes), and calculations should round up, i.e. with d=5
-   * and fillFactor=0.75, leaf nodes should be 8/10 full.
-   */
-  public abstract Optional<Pair<DataBox, Integer>> bulkLoad(Iterator<Pair<DataBox, RecordId>> data,
-                                                            float fillFactor)
     throws BPlusTreeException;
 
   /**

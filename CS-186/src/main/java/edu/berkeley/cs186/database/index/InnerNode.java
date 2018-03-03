@@ -2,7 +2,6 @@ package edu.berkeley.cs186.database.index;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -70,34 +69,100 @@ class InnerNode extends BPlusNode {
   // See BPlusNode.get.
   @Override
   public LeafNode get(DataBox key) {
-    throw new UnsupportedOperationException("TODO(hw2): implement.");
+    int index = numLessThanEqual(key, keys);
+    BPlusNode child = getChild(index);
+    return child.get(key);
   }
 
   // See BPlusNode.getLeftmostLeaf.
   @Override
   public LeafNode getLeftmostLeaf() {
-    throw new UnsupportedOperationException("TODO(hw2): implement.");
+    assert(children.size() > 0);
+    BPlusNode child = getChild(0);
+    return child.getLeftmostLeaf();
   }
 
   // See BPlusNode.put.
   @Override
   public Optional<Pair<DataBox, Integer>> put(DataBox key, RecordId rid)
       throws BPlusTreeException {
-    throw new UnsupportedOperationException("TODO(hw2): implement.");
-  }
+    int index = numLessThanEqual(key, keys);
+    BPlusNode child = getChild(index);
+    Optional<Pair<DataBox, Integer>> o = child.put(key, rid);
 
-  // See BPlusNode.bulkLoad.
-  @Override
-  public Optional<Pair<DataBox, Integer>> bulkLoad(Iterator<Pair<DataBox, RecordId>> data,
-                                                   float fillFactor)
-      throws BPlusTreeException {
-    throw new UnsupportedOperationException("TODO(hw2): implement.");
+    // If our child didn't split, then we don't have to do anything.
+    if (!o.isPresent()) {
+      return Optional.empty();
+    }
+
+    // If our child did split, then we have to insert (a) the new key and (b)
+    // the pointer to the newly created child. For example, we might go from an
+    // index which looks like this:
+    //
+    //     +---+---+---+---+
+    //     | a | b | c | e |
+    //     +---+---+---+---+
+    //    /    |   |   |    \
+    //   0     1   2   3     5
+    //
+    // to an index which looks like this:
+    //
+    //     +---+---+---+---+---+
+    //     | a | b | c | d | e |
+    //     +---+---+---+---+---+
+    //    /    |   |   |   |    \
+    //   0     1   2   3   4     5
+    //
+    // Note that in this example, p = (d, 4).
+    Pair<DataBox, Integer> p = o.get();
+    keys.add(index, p.getFirst());
+    children.add(index + 1, p.getSecond());
+
+    // If we can accommodate the new key and child pointer (i.e. we don't have
+    // more than 2d keys), then we're done (just don't forget to sync)!
+    int d = metadata.getOrder();
+    if (keys.size() <= 2*d) {
+      sync();
+      return Optional.empty();
+    }
+
+    // On the other hand, if we overflow (i.e. we now have 2d + 1 keys), then
+    // we have to split ourselves in two. Continuing the example from above
+    // (with order 2), we would split ourselves into the following two inner
+    // nodes:
+    //
+    //     left           right
+    //     +---+---+      +---+---+
+    //     | a | b |      | d | e |
+    //     +---+---+      +---+---+
+    //    /    |    \    /    |    \
+    //   0     1     2  3     4     5
+    //
+    // We would then return the pair (c, left).
+    assert(keys.size() == 2*d + 1);
+    List<DataBox> leftKeys = keys.subList(0, d);
+    DataBox middleKey = keys.get(d);
+    List<DataBox> rightKeys = keys.subList(d + 1, 2*d + 1);
+    List<Integer> leftChildren = children.subList(0, d + 1);
+    List<Integer> rightChildren = children.subList(d + 1, 2*d + 2);
+
+    // Create right node.
+    InnerNode n = new InnerNode(metadata, rightKeys, rightChildren);
+
+    // Update left node.
+    this.keys = leftKeys;
+    this.children = leftChildren;
+    sync();
+
+    return Optional.of(new Pair<>(middleKey, n.getPage().getPageNum()));
   }
 
   // See BPlusNode.remove.
   @Override
   public void remove(DataBox key) {
-    throw new UnsupportedOperationException("TODO(hw2): implement.");
+    int index = numLessThanEqual(key, keys);
+    BPlusNode child = getChild(index);
+    child.remove(key);
   }
 
   // Helpers ///////////////////////////////////////////////////////////////////

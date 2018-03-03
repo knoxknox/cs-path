@@ -118,6 +118,7 @@ class LeafNode extends BPlusNode {
    */
   private LeafNode(BPlusTreeMetadata metadata, int pageNum, List<DataBox> keys,
                    List<RecordId> rids, Optional<Integer> rightSibling) {
+    assert(keys.size() <= 2 * metadata.getOrder());
     assert(keys.size() == rids.size());
 
     this.metadata = metadata;
@@ -132,34 +133,91 @@ class LeafNode extends BPlusNode {
   // See BPlusNode.get.
   @Override
   public LeafNode get(DataBox key) {
-    throw new UnsupportedOperationException("TODO(hw2): implement.");
+    return this;
   }
 
   // See BPlusNode.getLeftmostLeaf.
   @Override
   public LeafNode getLeftmostLeaf() {
-    throw new UnsupportedOperationException("TODO(hw2): implement.");
+    return this;
   }
 
   // See BPlusNode.put.
   @Override
   public Optional<Pair<DataBox, Integer>> put(DataBox key, RecordId rid)
       throws BPlusTreeException {
-    throw new UnsupportedOperationException("TODO(hw2): implement.");
-  }
+    // Our implementation of B+ trees does not support duplicates!
+    if (keys.contains(key)) {
+      String message = String.format("Duplicate key %s inserted.", key);
+      throw new BPlusTreeException(message);
+    }
 
-  // See BPlusNode.bulkLoad.
-  @Override
-  public Optional<Pair<DataBox, Integer>> bulkLoad(Iterator<Pair<DataBox, RecordId>> data,
-                                                   float fillFactor)
-      throws BPlusTreeException {
-    throw new UnsupportedOperationException("TODO(hw2): implement.");
+    // Insert the new key and record id into the leaf node. For example, we
+    // might go from a leaf node which looks like this:
+    //
+    //   +-------+-------+-------+-------+
+    //   | k1:r1 | k2:r2 | k3:r3 | k5:r5 |
+    //   +-------+-------+-------+-------+
+    //
+    // to one which looks like this:
+    //
+    //   +-------+-------+-------+-------+-------+
+    //   | k1:r1 | k2:r2 | k3:r3 | k4:r4 | k5:r5 |
+    //   +-------+-------+-------+-------+-------+
+    //
+    // In this example, put was called with key k4 and record id r4.
+    int index = InnerNode.numLessThanEqual(key, keys);
+    keys.add(index, key);
+    rids.add(index, rid);
+
+    // If we can accommodate the new key and record id (i.e. the number of
+    // entries does not exceed 2d), then we're done (just don't forget to
+    // sync)!
+    int d = metadata.getOrder();
+    if (keys.size() <= 2 * d) {
+      sync();
+      return Optional.empty();
+    }
+
+    // If our leaf node overflows (i.e. we have 2d + 1 entries), then we have
+    // to split the leaf node. We put d entries on the left and d + 1 entries
+    // on the right. Continuing our example from above, we would split into the
+    // following two leaf nodes:
+    //
+    //   left               right
+    //   +-------+-------+  +-------+-------+-------+
+    //   | k1:r1 | k2:r2 |  | k3:r3 | k4:r4 | k5:r5 |
+    //   +-------+-------+  +-------+-------+-------+
+    //
+    // and we would return the pair (k3, right).
+    assert(keys.size() == 2*d + 1);
+    List<DataBox> leftKeys = keys.subList(0, d);
+    List<DataBox> rightKeys = keys.subList(d, 2*d + 1);
+    List<RecordId> leftRids  = rids.subList(0, d);
+    List<RecordId> rightRids  = rids.subList(d, 2*d + 1);
+
+    // Create right node.
+    LeafNode n = new LeafNode(metadata, rightKeys, rightRids, rightSibling);
+    int pageNum = n.getPage().getPageNum();
+
+    // Update left node.
+    this.keys = leftKeys;
+    this.rids = leftRids;
+    this.rightSibling = Optional.of(pageNum);
+    sync();
+
+    return Optional.of(new Pair<>(rightKeys.get(0), pageNum));
   }
 
   // See BPlusNode.remove.
   @Override
   public void remove(DataBox key) {
-    throw new UnsupportedOperationException("TODO(hw2): implement.");
+    int index = keys.indexOf(key);
+    if (index != -1) {
+      keys.remove(index);
+      rids.remove(index);
+    }
+    sync();
   }
 
   // Iterators /////////////////////////////////////////////////////////////////
@@ -335,7 +393,23 @@ class LeafNode extends BPlusNode {
    * meta.getAllocator().
    */
   public static LeafNode fromBytes(BPlusTreeMetadata metadata, int pageNum) {
-    throw new UnsupportedOperationException("TODO(hw2): implement.");
+    Page page = metadata.getAllocator().fetchPage(pageNum);
+    ByteBuffer buf = page.getByteBuffer();
+
+    assert(buf.get() == (byte) 1);
+
+    int s = buf.getInt();
+    Optional<Integer> rightSibling = s == -1 ? Optional.empty() : Optional.of(s);
+
+    List<DataBox> keys = new ArrayList<>();
+    List<RecordId> rids = new ArrayList<>();
+    int n = buf.getInt();
+    for (int i = 0; i < n; ++i) {
+      keys.add(DataBox.fromBytes(buf, metadata.getKeySchema()));
+      rids.add(RecordId.fromBytes(buf));
+    }
+
+    return new LeafNode(metadata, pageNum, keys, rids, rightSibling);
   }
 
   // Builtins //////////////////////////////////////////////////////////////////
