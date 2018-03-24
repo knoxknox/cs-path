@@ -1,12 +1,4 @@
 #!/usr/bin/python
-#
-# $Id: hmmmAssembler.py,v 1.4 2007/10/08 08:10:11 geoff Exp $
-#
-# hmmmAssembler.py
-# Ran Libeskind-Hadas, 2006
-# modified by Peter Mawhorter, June 2006
-# Extensively modified by Geoff Kuenning, October 2007
-# modified by Kaya Woodall, June 2012
 
 import sys, string, re, textwrap
 from binary import *
@@ -51,17 +43,7 @@ opcodes = (
         ("0000 0000 0000 0000", "0000 0000 0000 0000", "data"),
         )
 
-#Choose a dictionary to use: OldDict uses HMMM 2006-2011 (also internal language used within the assembler),
-# NewDict uses HMMM 2012+ (added ~n, ~m, and ~r suffixes w/ aliases).
-
-OldDict = {"halt":"halt", "read":"read", "write":"write", "nop":"nop",
-           "loadn":"loadn", "addn":"addn", "mov":"mov", "add":"add",
-           "sub":"sub", "neg":"neg", "mul":"mul", "div":"div", "mod":"mod",
-           "jump":"jump", "jeqz":"jeqz", "jnez":"jnez",
-           "jgtz":"jgtz", "jltz":"jltz", "call":"call", "jumpi":"jumpi",
-           "load":"load", "store":"store", "loadi":"loadi", "storei":"storei"}
-
-NewDict = {"halt":"halt", "read":"read", "write":"write", "nop":"nop",
+Mapping = {"halt":"halt", "read":"read", "write":"write", "nop":"nop",
            "setn":"loadn", "addn":"addn", "mov":"mov", "copy":"mov",
            "add":"add",
            "sub":"sub", "neg":"neg", "mul":"mul", "div":"div",
@@ -71,7 +53,7 @@ NewDict = {"halt":"halt", "read":"read", "write":"write", "nop":"nop",
            "jump":"jumpi", "jumpr":"jumpi", "loadn":"load", "storen":"store",
            "load":"loadi", "loadi":"loadi", "loadr":"loadi",
            "store":"storei", "storei":"storei", "storer":"storei"}
-    
+
 
 #
 # The assembler would prefer a dictionary for the opcodes; that's not
@@ -146,7 +128,7 @@ b must consist exclusively of blanks, 0s, and 1s."""
 def translate (flds) :
     try :
             operation = flds[0]
-            flds[0] = NewDict[operation] # Substitute OldDict here if using code written pre-2012.
+            flds[0] = Mapping[operation]
             opval = opcodeDict[flds[0]]
     except KeyError :
         print "\nOPERATION ERROR:"
@@ -221,12 +203,12 @@ def translate (flds) :
             else:
                 print "\nINTERNAL ERROR:"
                 print "HMMMASSEMBLER ENCOUNTERED AN UNEXPECTED SITUATION."
-                return "***INTERNAL ERROR HERE***" 
+                return "***INTERNAL ERROR HERE***"
             if not ok:
                 print "\nARGUMENT ERROR:"
                 print "'" + str(p) + "' IS OUT OF RANGE FOR THE ARGUMENT."
                 return "***ARGUMENT ERROR HERE***"
-            extraBits += numToTwosComplement(value, width)
+            extraBits += num_to_twos_complement(value, width)
 
     return insertBits(encoding, extraBits)
 
@@ -270,30 +252,13 @@ def assemble (program) :
     return output
 
 
-def readfile(filename) :
-    try:
-            file = open(filename,"r")       # file with machine code
-    except IOError:
-        print "Cannot open file: ", filename
-        sys.exit()
-    program = []
-    while 1 :
-        line = file.readline()
-        if line == "" :         # End of file
-            break       
-        line = line.strip()     # Strip white space from front and end
-        if line != ""   and  line[0] != '#' : # If it's not a comment...
-            program.append(line) # ... then it's part of the program
-    file.close()
-    return program
-
 def readstring(S) :
     program = []
     linesOfString = S.split("\n")
     for line in linesOfString:
         #print "line is", line
-        if line == "" :         
-            continue     
+        if line == "" :
+            continue
         line = line.strip()     # Strip white space from front and end
         if line != ""   and  line[0] != '#' : # If it's not a comment...
             program.append(line) # ... then it's part of the program
@@ -315,57 +280,9 @@ def writefile(machinecode, filename) :
         file.write(triplet[1] + "\n")
     print ""
 
-def main(programAsString = None) :
-
-    # argument handling:
-    fname = 0
-    oname = 0
-    filename = ""
+def main(input) :
     outputname = "out.b"
-
-    # here, we check in case there were command-line inputs
-    if not programAsString:
-        for arg in sys.argv:
-            if fname:
-                filename = arg
-                fname = 0
-                continue
-            if oname:
-                outputname = arg
-                oname = 0
-                continue
-            if arg[:2] == "-f":
-                if arg[2:]:
-                        filename = arg[2:]
-                else: fname = 1
-            if arg[:2] == "-o":
-                if arg[2:]:
-                        outputname = arg[2:]
-                else: oname = 1
-            if arg == "-h" or arg == "--help":
-                print "hmmmAssembler.py"
-                print "  Python program for assembling Harvey Mudd Miniature Machine code."
-                print "  Options:"
-                print "    -f filename     use filename as the input file"
-                print "    -o filename     use filename as the output file"
-                print "    -h, --help        print this help message\n"
-                sys.exit()
-
-        # the optional input prompt
-        if filename == "":
-            filename = raw_input("Enter input file name: ")
-        # to read from stdin instead we would use:  program = sys.stdin.readlines()
-        program = readfile(filename)
-        # the optional output prompt
-        if outputname == "":
-            outputname = raw_input("Enter output file name: ")
-
-    if programAsString:
-        outputname = "out.b"
-        #print 'programAsString is ', programAsString
-        program = readstring( programAsString )
-        #print "program is", program
-        #print 'program is', program
+    program = readstring(input)
 
     machinecode = assemble(program)
 
@@ -390,34 +307,3 @@ def main(programAsString = None) :
             # wrap returns a list of strings limited in length
             # this should give a 76 character line
         print ""
-
-
-# When this module is executed from the command line, as in "python filename.py"
-# __name__ will be __main__, so main () will be executed.
-# However, when this module is imported into the python environment __name__ will
-# be something else, so main() will not be executed automatically
-if __name__ == "__main__" : main () 
-
-# $Log: hmmmAssembler.py,v $
-# Revision 1.5 2012/06/18 1:52:30 kaya
-# Rewrote HMMM assembly code. New shortcuts can be found on the HMMM Directory page.
-# Included dictionary so the program can be run in old or new mode, as internal commands
-# remain unaltered. 
-# 
-# Revision 1.4  2007/10/08 08:10:11  geoff
-# Add support for the neg instruction.  This required generalizing the
-# "z" operand specifier.  Also get rid of the obsolete version of the
-# opcodes table, which I neglected to delete earlier.
-#
-# Revision 1.3  2007/10/07 09:18:58  geoff
-# Fix the masks on mov and data to correctly reflect the format of those
-# two pseudo-operations.
-#
-# Revision 1.2  2007/10/07 07:47:14  geoff
-# Major changes to improve the instruction architecture.  Unfortunately,
-# as part of these changes I converted all tabs to blanks, so there are
-# spurious diffs.  Modifications include:
-#
-# 1. Better table-driven encoding unified with simulator encoding tables.
-# 2. Major rewrite of assembly code to use tables rather than if/elif.
-#

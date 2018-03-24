@@ -1,28 +1,14 @@
 #!/usr/bin/python
-# hmmmSimulator.py
-#
-# $Id: hmmmSimulator.py,v 1.4 2007/10/08 08:10:12 geoff Exp $
-#
-# Ran Libeskind-Hadas, 2006
-# modified by Peter Mawhorter, June 2006
-# extensively modified by Geoff Kuenning, October 2007
 
-import sys, string, re
+import sys, string
 from binary import *
 
 memory = [0]*256        # 256 words of memory.  Instructions are represented
                         # ..in string form; data is integer
 register = [0]*16       # 16 integer registers
 pc = 0                  # program counter initialized to 0
-debug = 0               # debug mode?
-ask = 1                 # for fast debug mode
 lpc = 0                 # where the program counter was 1 instruction ago
 codesize = 0            # can't execute past this or read/write before this
-next = 1                # display next instruction?
-register_display = 0    # display the registers graphically?
-memory_display = 0      # display the memory contents graphically?
-
-# translation dictionaries
 
 #
 # opcodes encodes the preferred opcode translations.  Each entry is a
@@ -114,10 +100,10 @@ in binary encoding."""
     if type(line) != type(''):
         return ('***UNTRANSLATABLE INSTRUCTION!***', '***UNTRANSLATABLE***', \
           [])
-    hex = BinaryToNum(reduce(lambda x, y: x + y, line.strip().split(' ')))
+    hex = binary_to_num(reduce(lambda x, y: x + y, line.strip().split(' ')))
     for tuple in opcodes:
-        proto = BinaryToNum(reduce(lambda x, y: x + y, tuple[0].split(' ')))
-        mask = BinaryToNum(reduce(lambda x, y: x + y, tuple[1].split(' ')))
+        proto = binary_to_num(reduce(lambda x, y: x + y, tuple[0].split(' ')))
+        mask = binary_to_num(reduce(lambda x, y: x + y, tuple[1].split(' ')))
         if hex & mask == proto:
             # We have found the proper instruction.  Decode the arguments.
             opcode = tuple[2]
@@ -166,7 +152,7 @@ def simulationError(message):
     sys.exit()
 
 def run() :
-    global pc,  memory, loop_check, lpc, codesize
+    global pc, memory, loop_check, lpc, codesize
     while pc != -1:         # fetch/execute cycle
         if pc not in range(codesize) :
             simulationError("Memory Out of Bounds Error.\n"
@@ -184,7 +170,6 @@ def run() :
             sys.exit()
 
 def checkOverflow(register, ir, lpc):
-    
     if not valid_integer(register):
         parts = ir.split()
         (translation, opcode, args) = disassemble(memory[lpc])
@@ -194,82 +179,19 @@ def checkOverflow(register, ir, lpc):
         simulationError("Integer Overflow Error: Result was larger than 16 bits.\n")
 
 def execute(ir) :
-    global memory, register, pc, debug, ask, lpc
+    global memory, register, pc, lpc
 
     if ir == "" or valid_integer(ir):
         simulationError("Bad instruction at memory location " + lpc)
 
-    parts = ir.split()      # parse instruction
-
-    # This is the debug mode menu
-    if debug :
-        if ask :
-            loop = 1
-            while loop :
-                command = raw_input("\nDebugging Mode Command (h for help): ")
-                if command == "c" or command == "continue" :
-                    ask = 0
-                    loop = 0
-                elif command == "d" or command == "dump" :
-                    print "Memory Contents:"
-                    for i in range(codesize) :
-                        print str(i).ljust(3) + ":" + str(memory[i][:-1]).ljust(23)
-                    c_len = (len(memory) - codesize) / 6
-                    if (len(memory) - codesize) % 6 != 0 :
-                        c_len += 1
-                    for i in range(c_len) :
-                        try :
-                            print str(i+codesize).ljust(3) + ": " + str(memory[i+codesize]).ljust(7),
-                            print str(i+codesize+c_len).ljust(3) + ": " + str(memory[i+codesize+c_len]).ljust(7),
-                            print str(i+codesize+2*c_len).ljust(3) + ": " + str(memory[i+codesize+2*c_len]).ljust(7),
-                            print str(i+codesize+3*c_len).ljust(3) + ": " + str(memory[i+codesize+3*c_len]).ljust(7),
-                            print str(i+codesize+4*c_len).ljust(3) + ": " + str(memory[i+codesize+4*c_len]).ljust(7),
-                            print str(i+codesize+5*c_len).ljust(3) + ": " + str(memory[i+codesize+5*c_len]).ljust(7),
-                        except IndexError:
-                            pass
-                        print ""
-                elif command == "h" or command == "help" :
-                    print "\nDebugging Mode Commands:"
-                    print "  'c' or 'continue' : run through the rest of the program (in debugging mode)"
-                    print "  'd' or 'dump' : print the non-empty portions of memory"
-                    print "  'h' or 'help' : display this message"
-                    print "  'p' or 'print' : print the contents of the registers"
-                    print "  'q' or 'quit' : halt the program and exit"
-                    print "  'r' or 'run' : run through the rest of the program (exit debugging mode)"
-                    print "  default : execute the next instruction"
-                elif command == "p" or command == "print" :
-                    print "Registers:"
-                    for i in range(len(register)) :
-                        print str(i).ljust(2), ":", register[i]
-                    print ""
-                elif command == "q" or command == "quit" :
-                    print "Aborting Program..."
-                    sys.exit()
-                elif command == "r" or command == "run" :
-                    print "Continuing program..."
-                    debug = 0
-                    loop = 0
-                else:
-                    loop = 0
-        # end of "if ask"
-
+    parts = ir.split() # parse instruction
     (translation, opcode, args) = disassemble(memory[lpc])
-
-    if debug :  # this is necessary because of the 'run' command
-        print "\n  Program Counter:", lpc
-        print "  Instruction:", opcode, "  Arguments:", ", ".join(parts[1:])
-        print "  Translation:", translation
-        if next :
-            print "  Next Target:", pc
-            print "  Next Instruction:", disassemble(memory[pc])[0], "\n"
 
     # Register 0 is always forced to zero
     register[0] = 0
 
-    if opcode == "halt":  
+    if opcode == "halt":
         pc = -1                 # This terminates the run loop
-        if debug :
-            print "halt\n"
 
     elif opcode == "read":
         sys.stdin.flush()
@@ -284,7 +206,7 @@ def execute(ir) :
             input = raw_input("Enter number (q to quit): ")
             if input == "q" :
                 sys.exit()
-        register[args[0]] = int(input) 
+        register[args[0]] = int(input)
 
     elif opcode == "write":
         print register[args[0]]
@@ -423,62 +345,8 @@ def readfile(filename) :
         sys.exit()
     f.close()
 
-def main ( argList=None ) :
-    global debug, register_display, memory_display, visualize
-
-    # argument handling:
-    fname = 0
-    filename = "out.b"
-    if not argList:
-        argList = []
-        
-    for arg in argList :
-        if fname :
-            filename = arg
-            fname = 0
-            continue
-        elif arg[:2] == "-f" :
-            if arg[2:] :
-                    filename = arg[2:]
-            else: fname = 1
-        elif arg == "-d" or arg == "--debug" :
-            debug = 1
-        elif arg == "-m" or arg == "-mr" or arg == "-rm" or arg == "--memory-display" :
-            memory_display = 1
-        elif arg == "-n" or arg == "--no-debug" :
-            debug = 2
-        elif arg == "-r" or arg == "-mr" or arg == "-rm" or arg == "--register-display" :
-            register_display = 1
-        elif arg == "-h" or arg == "--help" :
-            print "hmmmSimulator.py"
-            print "  Python program for simulating a Harvey Mudd Miniature Machine."
-            print "Takes files compiled with hmmAssembler.py as input."
-            print "  Options:"
-            print "    -d, --debug     debugging mode"
-            print "    -f filename     use filename as the input file"
-            print "    -h, --help      print this help message"
-            print "    -n, --no-debug  do not prompt for debugging mode\n"
-            sys.exit()
-
-    if filename == "" :
-        filename = raw_input("Enter binary input file name: ")
-
+def main (filename=None) :
     readfile(filename)
-    # to read from stdin instead we would use:  program = sys.stdin.readlines()
-    if debug == 0:
-        yn = raw_input("Enter debugging mode? ")
-        if re.findall(r'(^y[es]*)|(^indeed)|^t$|(^true)|(^affirmative)', yn) :
-            debug = 1
-        
-
-    if debug == 2: debug = 0
-
-    if memory_display or register_display :
-        import visualize
-    if memory_display :
-        visualize.mem_setup()
-    if register_display :
-        visualize.reg_setup()
 
     try :
         run()
@@ -488,29 +356,3 @@ def main ( argList=None ) :
     except EOFError :
         print "\n\nEnd of input, halting program execution...\n"
         sys.exit()
-
-# When this module is executed from the command line, as in "python filename.py"
-# __name__ will be __main__, so main () will be executed.
-# However, when this module is imported into the python environment __name__ will
-# be something else, so main() will not be executed automatically
-if __name__ == "__main__" : main () 
-
-# $Log: hmmmSimulator.py,v $
-# Revision 1.4  2007/10/08 08:10:12  geoff
-# Add support for the neg instruction.
-#
-# Revision 1.3  2007/10/07 09:18:58  geoff
-# Fix the masks on mov and data to correctly reflect the format of those
-# two pseudo-operations.
-#
-# Revision 1.2  2007/10/07 07:47:14  geoff
-# Major changes to improve the instruction architecture.  Unfortunately,
-# as part of these changes I converted all tabs to blanks, so there are
-# spurious diffs.  Modifications include:
-#
-# 1. Table-driven decoding unified with assembler encoding tables.
-# 2. Error-checking and error-reporting functions to simplify the code.
-# 3. Complete rewrite/replacement of disassembly/decoding.
-# 4. Execute function rewritten to simplify structure and reflect new
-#    architecture.
-#
